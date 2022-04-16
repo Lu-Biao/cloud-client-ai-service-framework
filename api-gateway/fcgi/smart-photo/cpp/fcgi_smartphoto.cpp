@@ -42,7 +42,7 @@ void init_smartphoto_dir()
 
 std::string smartphoto_resp(const char *post_data, void *sp)
 {
-	D("post_data: " << post_data);
+	//D("post_data: " << post_data);
 
 	std::string resp_str = "{\"result\" : -1}";
 
@@ -367,6 +367,92 @@ std::string smartphoto_resp(const char *post_data, void *sp)
 	} else if (method == "del_all_file") {
 		int r = ccai_sp_remove_all_file(sp);
 		json_object_object_add(resp, "result", json_object_new_int(r));
+		resp_str = json_object_to_json_string(resp);
+	} else if (method == "scan_file") {
+		D("scan_file");
+		if (req_param == NULL) {
+			E("scan_file need req_param");
+			goto out;
+		}
+
+		std::string scan_file_path;
+		std::string scan_file_base64;
+
+		json_object_object_foreach(req_param, key, value) {
+			if (strncmp(key, "path", 4) == 0) {
+				scan_file_path = json_object_get_string(value);
+			} else if (strncmp(key, "base64", 6) == 0) {
+				scan_file_base64 = json_object_get_string(value);
+			} else {
+				E("Unknow param key: " << key);
+			}
+		}
+		D("path=" << scan_file_path);
+		D("base64 size=" << scan_file_base64.size());
+
+		std::string image = Base2string(scan_file_base64);
+
+		int r;
+		r = ccai_sp_scan_file_buffer(sp, scan_file_path.c_str(),
+					     image.c_str(), image.size());
+		if (r != 0) {
+			E("ccai_sp_scan_file_buffer error: " << r);
+			goto out;
+		}
+
+		auto cb_tag = [] (void *data, int64_t id,
+				  const char *name) -> int {
+			struct json_object *array = (struct json_object *)data;
+			if (array == NULL)
+				return -1;
+
+			if (name) {
+				D("ccai_sp_list_class/person_by_photo name="
+				  << name);
+				json_object_array_add(array,
+					json_object_new_string(name));
+			} else {
+				D("ccai_sp_list_class/person_by_photo id="
+				  << id);
+				json_object_array_add(array,
+					json_object_new_int64(id));
+			}
+			return 0;
+		};
+
+		// get class
+		struct json_object *clss = json_object_new_array();
+		if (clss == NULL) {
+			E("json_object_new_array failed");
+			goto out;
+		}
+
+		r = ccai_sp_list_class_by_photo(sp, scan_file_path.c_str(),
+						cb_tag, clss);
+		if (r != 0) {
+			E("ccai_sp_list_class_by_photo error: " << r);
+			goto out;
+		}
+
+		// get person
+		struct json_object *person = json_object_new_array();
+		if (person == NULL) {
+			E("json_object_new_array failed");
+			goto out;
+		}
+
+		r = ccai_sp_list_person_by_photo(sp, scan_file_path.c_str(),
+						 cb_tag, person);
+		if (r != 0) {
+			E("ccai_sp_list_person_by_photo error: " << r);
+			goto out;
+		}
+
+		json_object_object_add(resp, "result", json_object_new_int(r));
+		json_object_object_add(resp, "path",
+			json_object_new_string(scan_file_path.c_str()));
+		json_object_object_add(resp, "class", clss);
+		json_object_object_add(resp, "person", person);
 		resp_str = json_object_to_json_string(resp);
 	} else {
 		E("Unknow method: " << method);
