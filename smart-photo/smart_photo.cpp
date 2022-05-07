@@ -25,9 +25,14 @@
 #define SEGMENTATION_LABELS      MODEL_DIR"/hrnet-v2-c1-segmentation.labels"
 
 #define FACE_DETECTION_CONFIDENCE	0.8
-#define SEGMENTATION_CONFIDENCE		0.9
 #define FACE_MIN_PERCENT 		0.1
 #define HEAD_POSE_MAX_ANGLE		30.0
+
+#define SEGMENTATION_CONFIDENCE		0.9
+#define SEGMENTATION_MIN_COUNT_PERCENT	0.06
+#define SEGMENTATION_OUTPUT_HEIGHT	320
+#define SEGMENTATION_OUTPUT_WIDTH	320
+#define SEGMENTATION_NUM_OF_CLASS	150
 
 struct match_face {
 	struct smart_photo *sp;
@@ -495,40 +500,60 @@ static int segmentation(cv::Mat img, std::vector<std::string> *markers)
 	}
 	D("rc=" << rc << " detection.size()=" << detection.size());
 
-	const int c = 150;
-	const int h = 320;
-	const int w = 320;
+	const int c = SEGMENTATION_NUM_OF_CLASS;
+	const int h = SEGMENTATION_OUTPUT_HEIGHT;
+	const int w = SEGMENTATION_OUTPUT_WIDTH;
 
 	if (detection.size() != c * h * w)
 		return -1;
 
-	std::map<int, std::string> marker_ids;
-	std::vector<int> marker_counts(c, 0);
+	// map: key = class_id, value=(label, point_count)
+	std::map<int, std::pair<std::string, int> > marker_ids;
 
 	for (int pos = 0; pos < h * w; pos ++) {
 		float probability = 0;
-		int clss = -1;
+		int id = -1;
 		for (int i = 0; i < c; i ++) {
 			float val = detection[(i * h * w) + pos];
 			if (val > probability) {
 				probability = val;
-				clss = i;
+				id = i;
 			}
 		}
+		if (id == -1) {
+			E("cannot get id from model output. pos=" << pos);
+			continue;
+		}
 		if (probability > SEGMENTATION_CONFIDENCE) {
-			marker_ids[clss] = labels[clss];
-			marker_counts[clss] += 1;
+			if (marker_ids.count(id) != 0) {
+				// point_count ++
+				marker_ids.at(id).second ++;
+			} else {
+				// the first point
+				std::pair<std::string , int> label_count_pair;
+				label_count_pair.first = labels[id];
+				label_count_pair.second = 1;
+				marker_ids[id] = label_count_pair;
+			}
+		}
+	}
+
+	float min_count = h * w * SEGMENTATION_MIN_COUNT_PERCENT;
+
+	for (auto &m: marker_ids) {
+		const int id = m.first;
+		const std::string label = m.second.first;
+		const int count = m.second.second;
+
+		D("id=" << id << ", label=" << label << ", count=" << count);
+		if (count < min_count) {
+			D("\t ** drop small object [min_count("
+			  << min_count << ")]");
+			// drop small object
+			continue;
 		}
 
-	}
-	for (auto c: marker_ids) {
-		int count = marker_counts[c.first];
-		if (count < h * w * 0.06)
-			continue;
-
-		D("id=" << c.first << ", class=" << c.second
-		  << ", count=" << marker_counts[c.first]);
-		markers->push_back(c.second);
+		markers->push_back(label);
 	}
 
 	return 0;
