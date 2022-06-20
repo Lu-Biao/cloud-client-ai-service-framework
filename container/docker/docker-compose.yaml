@@ -1,0 +1,23 @@
+version: '3.3'
+services:
+  ccai:
+    image: nvbox.bj.intel.com:5000/service_runtime:ths
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+    volumes:
+      - ./models:/opt/fcgi/cgi-bin/models
+      - ./rootfs/d/etc/lighttpd/conf-enabled:/etc/lighttpd/conf-enabled
+      - ./rootfs/d/var/www/html:/var/www/html
+      - ./smartphoto:/smartphoto
+      - /dev/log:/dev/log
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+    ports:
+      - "0.0.0.0:8080:8080"
+      - "0.0.0.0:8081:8081"
+
